@@ -82,6 +82,6 @@ char *ff_http_auth_create_response(HTTPAuthState *state, const char *auth,
  * SHA-256-sess, SHA-512-256 and SHA-512-256-sess not supported yet
  */
 static char *make_digest_auth_sha(HTTPAuthState *state, const char *username,
-                              const char *password, const char *uri,
-                              const char *method, const char *algorithm);
+                                  const char *password, const char *uri,
+                                  const char *method, const char *algorithm);
 #endif /* AVFORMAT_HTTPAUTH_H */

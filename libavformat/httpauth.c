@@ -144,7 +144,7 @@ static char *make_digest_auth(HTTPAuthState *state, const char *username,
     char cnonce[17];
     char nc[9];
     int i;
-    char A1hash[33], A2hash[33], response[33];
+    char a1_hash[33], a2_hash[33], response[33];
     struct AVMD5 *md5ctx;
     uint8_t hash[16];
     char *authstr;
@@ -164,14 +164,14 @@ static char *make_digest_auth(HTTPAuthState *state, const char *username,
     av_md5_init(md5ctx);
     update_md5_strings(md5ctx, username, ":", state->realm, ":", password, NULL);
     av_md5_final(md5ctx, hash);
-    ff_data_to_hex(A1hash, hash, 16, 1);
+    ff_data_to_hex(a1_hash, hash, 16, 1);
 
     if (!strcmp(digest->algorithm, "") || !strcmp(digest->algorithm, "MD5")) {
     } else if (!strcmp(digest->algorithm, "MD5-sess")) {
         av_md5_init(md5ctx);
-        update_md5_strings(md5ctx, A1hash, ":", digest->nonce, ":", cnonce, NULL);
+        update_md5_strings(md5ctx, a1_hash, ":", digest->nonce, ":", cnonce, NULL);
         av_md5_final(md5ctx, hash);
-        ff_data_to_hex(A1hash, hash, 16, 1);
+        ff_data_to_hex(a1_hash, hash, 16, 1);
     } else {
         /* Unsupported algorithm */
         av_free(md5ctx);
@@ -181,14 +181,14 @@ static char *make_digest_auth(HTTPAuthState *state, const char *username,
     av_md5_init(md5ctx);
     update_md5_strings(md5ctx, method, ":", uri, NULL);
     av_md5_final(md5ctx, hash);
-    ff_data_to_hex(A2hash, hash, 16, 1);
+    ff_data_to_hex(a2_hash, hash, 16, 1);
 
     av_md5_init(md5ctx);
-    update_md5_strings(md5ctx, A1hash, ":", digest->nonce, NULL);
+    update_md5_strings(md5ctx, a1_hash, ":", digest->nonce, NULL);
     if (!strcmp(digest->qop, "auth") || !strcmp(digest->qop, "auth-int")) {
         update_md5_strings(md5ctx, ":", nc, ":", cnonce, ":", digest->qop, NULL);
     }
-    update_md5_strings(md5ctx, ":", A2hash, NULL);
+    update_md5_strings(md5ctx, ":", a2_hash, NULL);
     av_md5_final(md5ctx, hash);
     ff_data_to_hex(response, hash, 16, 1);
 
@@ -239,11 +239,11 @@ static char *make_digest_auth(HTTPAuthState *state, const char *username,
 
 /**
  * Generate a digest reply SHA-256, according to RFC 7616.
- * TODO : support other RFIC 7616 Algorithm 
+ * TODO : support other RFC 7616 Algorithm 
  */
 static char *make_digest_auth_sha(HTTPAuthState *state, const char *username,
-                              const char *password, const char *uri,
-                              const char *method, const char *algorithm)
+                                  const char *password, const char *uri,
+                                  const char *method, const char *algorithm)
 {
     DigestParams *digest = &state->digest_params;
     int len;
@@ -251,7 +251,7 @@ static char *make_digest_auth_sha(HTTPAuthState *state, const char *username,
     char cnonce[17];
     char nc[9];
     int i;
-    char A1hash[65], A2hash[65], response[65];
+    char a1_hash[65], a2_hash[65], response[65];
     struct AVHashContext *hashctx;
     uint8_t hash[64];
     char *authstr;
@@ -262,7 +262,7 @@ static char *make_digest_auth_sha(HTTPAuthState *state, const char *username,
     /* Generate a client nonce. */
     for (i = 0; i < 2; i++)
         cnonce_buf[i] = av_get_random_seed();
-    ff_data_to_hex(cnonce, (const uint8_t*) cnonce_buf, sizeof(cnonce_buf), 1);
+    ff_data_to_hex(cnonce, (const uint8_t *)cnonce_buf, sizeof(cnonce_buf), 1);
 
     /* Allocate a hash context based on the provided algorithm */
     int ret = av_hash_alloc(&hashctx, algorithm);
@@ -280,7 +280,7 @@ static char *make_digest_auth_sha(HTTPAuthState *state, const char *username,
     av_hash_update(hashctx, (const uint8_t *)":", 1);
     av_hash_update(hashctx, (const uint8_t *)password, strlen(password));
     av_hash_final(hashctx, hash);
-    ff_data_to_hex(A1hash, hash, av_hash_get_size(hashctx), 1);
+    ff_data_to_hex(a1_hash, hash, av_hash_get_size(hashctx), 1);
 
     /* Initialize the hash context for A2 */
     av_hash_init(hashctx);
@@ -288,11 +288,11 @@ static char *make_digest_auth_sha(HTTPAuthState *state, const char *username,
     av_hash_update(hashctx, (const uint8_t *)":", 1);
     av_hash_update(hashctx, (const uint8_t *)uri, strlen(uri));
     av_hash_final(hashctx, hash);
-    ff_data_to_hex(A2hash, hash, av_hash_get_size(hashctx), 1);
+    ff_data_to_hex(a2_hash, hash, av_hash_get_size(hashctx), 1);
 
     /* Initialize the hash context for response */
     av_hash_init(hashctx);
-    av_hash_update(hashctx, (const uint8_t *)A1hash, strlen(A1hash));
+    av_hash_update(hashctx, (const uint8_t *)a1_hash, strlen(a1_hash));
     av_hash_update(hashctx, (const uint8_t *)":", 1);
     av_hash_update(hashctx, (const uint8_t *)digest->nonce, strlen(digest->nonce));
     av_hash_update(hashctx, (const uint8_t *)":", 1);
@@ -302,7 +302,7 @@ static char *make_digest_auth_sha(HTTPAuthState *state, const char *username,
     av_hash_update(hashctx, (const uint8_t *)":", 1);
     av_hash_update(hashctx, (const uint8_t *)digest->qop, strlen(digest->qop));
     av_hash_update(hashctx, (const uint8_t *)":", 1);
-    av_hash_update(hashctx, (const uint8_t *)A2hash, strlen(A2hash));
+    av_hash_update(hashctx, (const uint8_t *)a2_hash, strlen(a2_hash));
     av_hash_final(hashctx, hash);
     ff_data_to_hex(response, hash, av_hash_get_size(hashctx), 1);
 
@@ -386,7 +386,7 @@ char *ff_http_auth_create_response(HTTPAuthState *state, const char *auth,
         if ((password = strchr(username, ':'))) {
             *password++ = 0;
             /* add digest algorithm SHA-256 */
-            if (!strcmp(state->digest_params.algorithm, "SHA-256")) {
+            if (!strcmp(state->digest_params.algorithm, "SHA256")) {
                 authstr = make_digest_auth_sha(state, username, password, path, method,"SHA256");
             } else {
                 authstr = make_digest_auth(state, username, password, path, method);
