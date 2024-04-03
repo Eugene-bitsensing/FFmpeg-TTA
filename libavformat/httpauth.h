@@ -76,4 +76,12 @@ void ff_http_auth_handle_header(HTTPAuthState *state, const char *key,
 char *ff_http_auth_create_response(HTTPAuthState *state, const char *auth,
                                    const char *path, const char *method);
 
+/**
+ * New function declaration for RFC7616
+ * SHA-256 digest authentication
+ * SHA-256-sess, SHA-512-256 and SHA-512-256-sess not supported yet
+ */
+static char *make_digest_auth_sha(HTTPAuthState *state, const char *username,
+                                  const char *password, const char *uri,
+                                  const char *method, const char *algorithm);
 #endif /* AVFORMAT_HTTPAUTH_H */
