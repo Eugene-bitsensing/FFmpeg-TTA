@@ -24,7 +24,7 @@
 #include "libavutil/avstring.h"
 #include "internal.h"
 #include "libavutil/random_seed.h"
-#include "libavutil/md5.h"
+#include "libavutil/hash.h"
 #include "urldecode.h"
 
 static void handle_basic_params(HTTPAuthState *state, const char *key,
@@ -117,35 +117,35 @@ void ff_http_auth_handle_header(HTTPAuthState *state, const char *key,
     }
 }
 
-
-static void update_md5_strings(struct AVMD5 *md5ctx, ...)
+/* Generate hash string, updated to use AVHashContext to support other algorithms */
+static void update_hash_strings(struct AVHashContext *hash_ctx, ...)
 {
     va_list vl;
 
-    va_start(vl, md5ctx);
+    va_start(vl, hash_ctx);
     while (1) {
-        const char* str = va_arg(vl, const char*);
+        const char *str = va_arg(vl, const char*);
         if (!str)
             break;
-        av_md5_update(md5ctx, str, strlen(str));
+        av_hash_update(hash_ctx, (const uint8_t *)str, strlen(str));
     }
     va_end(vl);
 }
 
-/* Generate a digest reply, according to RFC 2617. */
+/* Generate a digest reply, according to RFC 2617. Update to support RFC 7617*/
 static char *make_digest_auth(HTTPAuthState *state, const char *username,
                               const char *password, const char *uri,
                               const char *method)
 {
     DigestParams *digest = &state->digest_params;
-    int len;
+    size_t len;
     uint32_t cnonce_buf[2];
     char cnonce[17];
     char nc[9];
     int i;
-    char A1hash[33], A2hash[33], response[33];
-    struct AVMD5 *md5ctx;
-    uint8_t hash[16];
+    char a1_hash[65], a2_hash[65], response[65];
+    struct AVHashContext *hash_ctx = NULL; // use AVHashContext for other algorithm support
+    size_t len_hash = 33; // Modifiable hash length, MD5:32, SHA-2:64
     char *authstr;
 
     digest->nc++;
@@ -156,52 +156,56 @@ static char *make_digest_auth(HTTPAuthState *state, const char *username,
         cnonce_buf[i] = av_get_random_seed();
     ff_data_to_hex(cnonce, (const uint8_t*) cnonce_buf, sizeof(cnonce_buf), 1);
 
-    md5ctx = av_md5_alloc();
-    if (!md5ctx)
-        return NULL;
-
-    av_md5_init(md5ctx);
-    update_md5_strings(md5ctx, username, ":", state->realm, ":", password, NULL);
-    av_md5_final(md5ctx, hash);
-    ff_data_to_hex(A1hash, hash, 16, 1);
-
-    if (!strcmp(digest->algorithm, "") || !strcmp(digest->algorithm, "MD5")) {
-    } else if (!strcmp(digest->algorithm, "MD5-sess")) {
-        av_md5_init(md5ctx);
-        update_md5_strings(md5ctx, A1hash, ":", digest->nonce, ":", cnonce, NULL);
-        av_md5_final(md5ctx, hash);
-        ff_data_to_hex(A1hash, hash, 16, 1);
-    } else {
-        /* Unsupported algorithm */
-        av_free(md5ctx);
+    /* Generate hash context by algorithm. */
+    const char *algorithm = digest->algorithm;
+    const char *hashing_algorithm;
+    if (!*algorithm) {
+        algorithm = "MD5";  // if empty, use MD5 as Default 
+        hashing_algorithm = "MD5";
+    } else if (av_stristr(algorithm, "MD5")) {
+        hashing_algorithm = "MD5";
+    } else if (av_stristr(algorithm, "sha256") || av_stristr(algorithm, "sha-256")) {
+        hashing_algorithm = "SHA256";
+        len_hash = 65; // SHA-2: 64 characters.
+    } else if (av_stristr(algorithm, "sha512-256") || av_stristr(algorithm, "sha-512-256")) {
+        hashing_algorithm = "SHA512_256";
+        len_hash = 65; // SHA-2: 64 characters.
+    } else { // Unsupported algorithm
         return NULL;
     }
 
-    av_md5_init(md5ctx);
-    update_md5_strings(md5ctx, method, ":", uri, NULL);
-    av_md5_final(md5ctx, hash);
-    ff_data_to_hex(A2hash, hash, 16, 1);
-
-    av_md5_init(md5ctx);
-    update_md5_strings(md5ctx, A1hash, ":", digest->nonce, NULL);
-    if (!strcmp(digest->qop, "auth") || !strcmp(digest->qop, "auth-int")) {
-        update_md5_strings(md5ctx, ":", nc, ":", cnonce, ":", digest->qop, NULL);
-    }
-    update_md5_strings(md5ctx, ":", A2hash, NULL);
-    av_md5_final(md5ctx, hash);
-    ff_data_to_hex(response, hash, 16, 1);
-
-    av_free(md5ctx);
-
-    if (!strcmp(digest->qop, "") || !strcmp(digest->qop, "auth")) {
-    } else if (!strcmp(digest->qop, "auth-int")) {
-        /* qop=auth-int not supported */
+    int ret = av_hash_alloc(&hash_ctx, hashing_algorithm);
+    if (ret < 0)
         return NULL;
-    } else {
-        /* Unsupported qop value. */
+
+    /* a1 hash calculation */
+    av_hash_init(hash_ctx);
+    update_hash_strings(hash_ctx, username, ":", state->realm, ":", password, NULL);
+    if (av_stristr(algorithm, "-sess")) {
+        update_hash_strings(hash_ctx, ":", digest->nonce, ":", cnonce, NULL);
+    }
+    av_hash_final_hex(hash_ctx, a1_hash, len_hash);
+
+    /* a2 hash calculation */
+    av_hash_init(hash_ctx);
+    update_hash_strings(hash_ctx, method, ":", uri, NULL);
+    av_hash_final_hex(hash_ctx, a2_hash, len_hash);
+    
+    /* response hash calculation */
+    av_hash_init(hash_ctx);
+    update_hash_strings(hash_ctx, a1_hash, ":", digest->nonce, NULL);
+    if (!strcmp(digest->qop, "auth")) {
+        update_hash_strings(hash_ctx, ":", nc, ":", cnonce, ":", digest->qop, NULL);
+    } else if (!strcmp(digest->qop, "auth-int")) { // unsupported
+        av_hash_freep(&hash_ctx);
         return NULL;
     }
+    update_hash_strings(hash_ctx, ":", a2_hash, NULL);
+    update_hash_strings(hash_ctx, NULL);
+    av_hash_final_hex(hash_ctx, response, len_hash);
+    av_hash_freep(&hash_ctx);
 
+    /* Authorization header generation */
     len = strlen(username) + strlen(state->realm) + strlen(digest->nonce) +
               strlen(uri) + strlen(response) + strlen(digest->algorithm) +
               strlen(digest->opaque) + strlen(digest->qop) + strlen(cnonce) +
